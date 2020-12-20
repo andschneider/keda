@@ -15,6 +15,7 @@ require (
 	github.com/Huawei/gophercloud v1.0.21
 	github.com/Shopify/sarama v1.27.2
 	github.com/aws/aws-sdk-go v1.36.11
+	github.com/eclipse/paho.mqtt.golang v1.3.0
 	github.com/go-logr/logr v0.1.0
 	github.com/go-redis/redis v6.15.9+incompatible
 	github.com/go-sql-driver/mysql v1.5.0
