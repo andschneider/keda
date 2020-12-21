@@ -3,7 +3,6 @@ package scalers
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"time"
 
@@ -18,7 +17,8 @@ import (
 )
 
 const (
-	defaultMqttMessagePresent = true
+	defaultMqttMessagePresent  = true
+	defaultMqttDesiredReplicas = 1
 )
 
 type mqttScaler struct {
@@ -26,6 +26,7 @@ type mqttScaler struct {
 	metadata *mqttMetadata
 }
 
+// TODO add auth parameters
 type mqttMetadata struct {
 	host            string
 	topic           string
@@ -35,6 +36,15 @@ type mqttMetadata struct {
 
 var mqttLog = logf.Log.WithName("mqtt_scaler")
 
+// generateMqttClientId attempts to create a unique client id to be used when connecting to the broker.
+// If the client id is not unique, the broker will disconect the client.
+func generateMqttClientId() string {
+	// TODO review this. better way to generate a random ID?
+	cid := fmt.Sprintf("%s-%s", "keda-mqtt-scaler", strconv.Itoa(time.Now().Second()))
+	mqttLog.Info("generated a client id", "clientId", cid)
+	return cid
+}
+
 // NewMqttScaler creates a new mqttScaler
 func NewMqttScaler(config *ScalerConfig) (Scaler, error) {
 	meta, parseErr := parseMqttMetadata(config)
@@ -43,10 +53,9 @@ func NewMqttScaler(config *ScalerConfig) (Scaler, error) {
 	}
 
 	// configure MQTT client
-	cid := fmt.Sprintf("%s-%d", "keda-mqtt-scaler", os.Getpid())
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(meta.host)
-	opts.SetClientID(cid)
+	opts.SetClientID(generateMqttClientId())
 	opts.SetCleanSession(true)
 	opts.KeepAlive = 30
 	opts.PingTimeout = 15 * time.Second
@@ -96,13 +105,12 @@ func parseMqttMetadata(config *ScalerConfig) (*mqttMetadata, error) {
 	return &meta, nil
 }
 
-// IsActive checks if there is a persistent message present or absent when the client first subscribes
-func (s *mqttScaler) IsActive(ctx context.Context) (bool, error) {
+func (s *mqttScaler) checkPersistentMessage() (bool, error) {
+	// TODO add qos as a config param
+	qos := 0
 	if token := s.client.Connect(); token.Wait() && token.Error() != nil {
 		return false, fmt.Errorf("could not connect to broker: %v\n", token.Error())
 	}
-	// TODO add qos as a config param
-	qos := 0
 
 	receivedRetain := false
 	if token := s.client.Subscribe(s.metadata.topic, byte(qos), func(client mqtt.Client, message mqtt.Message) {
@@ -114,12 +122,22 @@ func (s *mqttScaler) IsActive(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("could not subscribe to topic: %v\n", token.Error())
 	}
 
+	// TODO fix race condition with this log and the received message log
 	mqttLog.Info("checked broker for persistent message",
 		"status", receivedRetain,
 		"broker", s.metadata.host,
 		"topic", s.metadata.topic,
 	)
 	return receivedRetain, nil
+}
+
+// IsActive checks if there is a persistent message present or absent when the client first subscribes
+func (s *mqttScaler) IsActive(ctx context.Context) (bool, error) {
+	hasRetained, err := s.checkPersistentMessage()
+	if err != nil {
+		return false, fmt.Errorf("error getting message from MQTT broker: %v", err)
+	}
+	return hasRetained, nil
 }
 
 func (s *mqttScaler) Close() error {
@@ -135,7 +153,6 @@ func (s *mqttScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	targetMetricValue := resource.NewQuantity(int64(specReplicas), resource.DecimalSI)
 	externalMetric := &v2beta2.ExternalMetricSource{
 		Metric: v2beta2.MetricIdentifier{
-			//Name: kedautil.NormalizeString(fmt.Sprintf("%s-%s-%s", "MQTT", s.metadata.host, s.metadata.topic)),
 			Name: kedautil.NormalizeString(fmt.Sprintf("%s-%s-%s-%t", "MQTT", s.metadata.host, s.metadata.topic, s.metadata.present)),
 		},
 		Target: v2beta2.MetricTarget{
@@ -143,19 +160,21 @@ func (s *mqttScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 			AverageValue: targetMetricValue,
 		},
 	}
-	metricSpec := v2beta2.MetricSpec{External: externalMetric, Type: cronMetricType}
+	metricSpec := v2beta2.MetricSpec{External: externalMetric, Type: externalMetricType}
 	return []v2beta2.MetricSpec{metricSpec}
 }
 
 // GetMetrics finds the current value of the metric
 func (s *mqttScaler) GetMetrics(ctx context.Context, metricName string, metricSelector labels.Selector) ([]external_metrics.ExternalMetricValue, error) {
-	var currentReplicas = int64(defaultDesiredReplicas)
-	isActive, err := s.IsActive(ctx)
+	var currentReplicas = int64(defaultMqttDesiredReplicas)
+	hasRetained, err := s.checkPersistentMessage()
 	if err != nil {
 		mqttLog.Error(err, "error")
 		return []external_metrics.ExternalMetricValue{}, err
 	}
-	if isActive {
+	// TODO incorporate the metadata.present option here
+	// if present is true, a retained message is expected
+	if hasRetained {
 		currentReplicas = s.metadata.desiredReplicas
 	}
 
