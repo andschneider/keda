@@ -4,6 +4,7 @@
 
 ## History
 
+- [Unreleased](#unreleased)
 - [v2.0.0](#v200)
 - [v1.5.0](#v150)
 - [v1.4.1](#v141)
@@ -13,10 +14,30 @@
 - [v1.1.0](#v110)
 - [v1.0.0](#v100)
 
+## Unreleased
+
+### New
+- Can use Pod Identity with Azure Event Hub scaler ([#994](https://github.com/kedacore/keda/issues/994))
+- Introducing InfluxDB scaler ([#1239](https://github.com/kedacore/keda/issues/1239))
+
+### Improvements
+- Support add ScaledJob's label to its job ([#1311](https://github.com/kedacore/keda/issues/1311))
+- Bug fix in aws_iam_authorization to utilize correct secret from env key name ([PR #1332](https://github.com/kedacore/keda/pull/1332))
+- Add metricName field to postgres scaler and auto generate if not defined. ([PR #1381](https://github.com/kedacore/keda/pull/1381))
+- Mask password in postgres scaler auto generated metricName. ([PR #1381](https://github.com/kedacore/keda/pull/1381))
+- Bug fix for pending jobs in ScaledJob's accurateScalingStrategy . ([#1323](https://github.com/kedacore/keda/issues/1323))
+- Fix memory leak because of unclosed scalers. ([#1413](https://github.com/kedacore/keda/issues/1413))
+
+### Breaking Changes
+
+### Other
+- Bump go module version to v2 ([#1324](https://github.com/kedacore/keda/pull/1324))
+
 ## v2.0.0
 
 ### New
 
+- KEDA uses a dedicated [HTTP client](https://pkg.go.dev/net/http#Client), connection pool, and (optional) TLS certificate for each configured scaler
 - KEDA scales any CustomResource that implements Scale subresource ([#703](https://github.com/kedacore/keda/issues/703))
 - Provide KEDA go-client ([#494](https://github.com/kedacore/keda/issues/494))
 - Define KEDA readiness and liveness probes ([#788](https://github.com/kedacore/keda/issues/788))

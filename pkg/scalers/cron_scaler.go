@@ -15,7 +15,7 @@ import (
 	"k8s.io/metrics/pkg/apis/external_metrics"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kedautil "github.com/kedacore/keda/pkg/util"
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 const (
@@ -116,11 +116,12 @@ func (s *cronScaler) IsActive(ctx context.Context) (bool, error) {
 
 	// Since we are considering the timestamp here and not the exact time, timezone does matter.
 	currentTime := time.Now().Unix()
-	if nextStartTime < nextEndTime && currentTime < nextStartTime {
+	switch {
+	case nextStartTime < nextEndTime && currentTime < nextStartTime:
 		return false, nil
-	} else if currentTime <= nextEndTime {
+	case currentTime <= nextEndTime:
 		return true, nil
-	} else {
+	default:
 		return false, nil
 	}
 }

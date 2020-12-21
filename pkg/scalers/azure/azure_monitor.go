@@ -12,7 +12,7 @@ import (
 	"github.com/Azure/go-autorest/autorest/azure/auth"
 	"k8s.io/klog"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	kedav1alpha1 "github.com/kedacore/keda/v2/api/v1alpha1"
 )
 
 // Much of the code in this file is taken from the Azure Kubernetes Metrics Adapter
@@ -207,17 +207,18 @@ func formatTimeSpan(timeSpan string) (string, error) {
 
 func verifyAggregationTypeIsSupported(aggregationType string, data []insights.MetricValue) (*float64, error) {
 	var valuePtr *float64
-	if strings.EqualFold(string(insights.Average), aggregationType) && data[len(data)-1].Average != nil {
+	switch {
+	case strings.EqualFold(string(insights.Average), aggregationType) && data[len(data)-1].Average != nil:
 		valuePtr = data[len(data)-1].Average
-	} else if strings.EqualFold(string(insights.Total), aggregationType) && data[len(data)-1].Total != nil {
+	case strings.EqualFold(string(insights.Total), aggregationType) && data[len(data)-1].Total != nil:
 		valuePtr = data[len(data)-1].Total
-	} else if strings.EqualFold(string(insights.Maximum), aggregationType) && data[len(data)-1].Maximum != nil {
+	case strings.EqualFold(string(insights.Maximum), aggregationType) && data[len(data)-1].Maximum != nil:
 		valuePtr = data[len(data)-1].Maximum
-	} else if strings.EqualFold(string(insights.Minimum), aggregationType) && data[len(data)-1].Minimum != nil {
+	case strings.EqualFold(string(insights.Minimum), aggregationType) && data[len(data)-1].Minimum != nil:
 		valuePtr = data[len(data)-1].Minimum
-	} else if strings.EqualFold(string(insights.Count), aggregationType) && data[len(data)-1].Count != nil {
+	case strings.EqualFold(string(insights.Count), aggregationType) && data[len(data)-1].Count != nil:
 		valuePtr = data[len(data)-1].Count
-	} else {
+	default:
 		err := fmt.Errorf("unsupported aggregation type %s", insights.AggregationType(strings.ToTitle(aggregationType)))
 		return nil, err
 	}

@@ -15,7 +15,7 @@ import (
 	"k8s.io/metrics/pkg/apis/external_metrics"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kedautil "github.com/kedacore/keda/pkg/util"
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 type kafkaScaler struct {
@@ -91,23 +91,32 @@ func NewKafkaScaler(config *ScalerConfig) (Scaler, error) {
 
 func parseKafkaMetadata(config *ScalerConfig) (kafkaMetadata, error) {
 	meta := kafkaMetadata{}
-
-	if config.TriggerMetadata["bootstrapServers"] == "" {
+	switch {
+	case config.TriggerMetadata["bootstrapServersFromEnv"] != "":
+		meta.bootstrapServers = strings.Split(config.ResolvedEnv[config.TriggerMetadata["bootstrapServersFromEnv"]], ",")
+	case config.TriggerMetadata["bootstrapServers"] != "":
+		meta.bootstrapServers = strings.Split(config.TriggerMetadata["bootstrapServers"], ",")
+	default:
 		return meta, errors.New("no bootstrapServers given")
 	}
-	if config.TriggerMetadata["bootstrapServers"] != "" {
-		meta.bootstrapServers = strings.Split(config.TriggerMetadata["bootstrapServers"], ",")
-	}
 
-	if config.TriggerMetadata["consumerGroup"] == "" {
+	switch {
+	case config.TriggerMetadata["consumerGroupFromEnv"] != "":
+		meta.group = config.ResolvedEnv[config.TriggerMetadata["consumerGroupFromEnv"]]
+	case config.TriggerMetadata["consumerGroup"] != "":
+		meta.group = config.TriggerMetadata["consumerGroup"]
+	default:
 		return meta, errors.New("no consumer group given")
 	}
-	meta.group = config.TriggerMetadata["consumerGroup"]
 
-	if config.TriggerMetadata["topic"] == "" {
+	switch {
+	case config.TriggerMetadata["topicFromEnv"] != "":
+		meta.topic = config.ResolvedEnv[config.TriggerMetadata["topicFromEnv"]]
+	case config.TriggerMetadata["topic"] != "":
+		meta.topic = config.TriggerMetadata["topic"]
+	default:
 		return meta, errors.New("no topic given")
 	}
-	meta.topic = config.TriggerMetadata["topic"]
 
 	meta.offsetResetPolicy = defaultOffsetResetPolicy
 
@@ -331,7 +340,7 @@ func (s *kafkaScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	return []v2beta2.MetricSpec{metricSpec}
 }
 
-//GetMetrics returns value for a supported metric and an error if there is a problem getting the metric
+// GetMetrics returns value for a supported metric and an error if there is a problem getting the metric
 func (s *kafkaScaler) GetMetrics(ctx context.Context, metricName string, metricSelector labels.Selector) ([]external_metrics.ExternalMetricValue, error) {
 	partitions, err := s.getPartitions()
 	if err != nil {

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
-	prommetrics "github.com/kedacore/keda/pkg/metrics"
-	"github.com/kedacore/keda/pkg/scaling"
+	kedav1alpha1 "github.com/kedacore/keda/v2/api/v1alpha1"
+	prommetrics "github.com/kedacore/keda/v2/pkg/metrics"
+	"github.com/kedacore/keda/v2/pkg/scaling"
 
 	"github.com/go-logr/logr"
 	"github.com/kubernetes-incubator/custom-metrics-apiserver/pkg/provider"
@@ -62,7 +62,7 @@ func (p *KedaProvider) GetExternalMetric(namespace string, metricSelector labels
 		return nil, err
 	}
 
-	//get the scaled objects matching namespace and labels
+	// get the scaled objects matching namespace and labels
 	scaledObjects := &kedav1alpha1.ScaledObjectList{}
 	opts := []client.ListOption{
 		client.InNamespace(namespace),
@@ -88,7 +88,7 @@ func (p *KedaProvider) GetExternalMetric(namespace string, metricSelector labels
 		scalerName := strings.Replace(fmt.Sprintf("%T", scaler), "*scalers.", "", 1)
 
 		for _, metricSpec := range metricSpecs {
-			//skip cpu/memory resource scaler
+			// skip cpu/memory resource scaler
 			if metricSpec.External == nil {
 				continue
 			}
@@ -111,7 +111,7 @@ func (p *KedaProvider) GetExternalMetric(namespace string, metricSelector labels
 		scaler.Close()
 	}
 
-	if len(matchingMetrics) <= 0 {
+	if len(matchingMetrics) == 0 {
 		return nil, fmt.Errorf("No matching metrics found for " + info.Metric)
 	}
 
@@ -124,7 +124,7 @@ func (p *KedaProvider) GetExternalMetric(namespace string, metricSelector labels
 func (p *KedaProvider) ListAllExternalMetrics() []provider.ExternalMetricInfo {
 	externalMetricsInfo := []provider.ExternalMetricInfo{}
 
-	//get all ScaledObjects in namespace(s) watched by the operator
+	// get all ScaledObjects in namespace(s) watched by the operator
 	scaledObjects := &kedav1alpha1.ScaledObjectList{}
 	opts := []client.ListOption{
 		client.InNamespace(p.watchedNamespace),

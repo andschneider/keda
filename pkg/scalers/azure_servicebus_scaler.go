@@ -3,11 +3,12 @@ package scalers
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 
 	"github.com/Azure/azure-amqp-common-go/v3/auth"
 	servicebus "github.com/Azure/azure-service-bus-go"
-	"github.com/kedacore/keda/pkg/scalers/azure"
+	"github.com/kedacore/keda/v2/pkg/scalers/azure"
 	v2beta2 "k8s.io/api/autoscaling/v2beta2"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -15,8 +16,8 @@ import (
 	"k8s.io/metrics/pkg/apis/external_metrics"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
-	kedautil "github.com/kedacore/keda/pkg/util"
+	kedav1alpha1 "github.com/kedacore/keda/v2/api/v1alpha1"
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 type entityType int
@@ -34,6 +35,7 @@ var azureServiceBusLog = logf.Log.WithName("azure_servicebus_scaler")
 type azureServiceBusScaler struct {
 	metadata    *azureServiceBusMetadata
 	podIdentity kedav1alpha1.PodIdentityProvider
+	httpClient  *http.Client
 }
 
 type azureServiceBusMetadata struct {
@@ -56,6 +58,7 @@ func NewAzureServiceBusScaler(config *ScalerConfig) (Scaler, error) {
 	return &azureServiceBusScaler{
 		metadata:    meta,
 		podIdentity: config.PodIdentity,
+		httpClient:  kedautil.CreateHTTPClient(config.GlobalHTTPTimeout),
 	}, nil
 }
 
@@ -102,8 +105,8 @@ func parseAzureServiceBusMetadata(config *ScalerConfig) (*azureServiceBusMetadat
 	if meta.entityType == none {
 		return nil, fmt.Errorf("no service bus entity type set")
 	}
-
-	if config.PodIdentity == "" || config.PodIdentity == kedav1alpha1.PodIdentityProviderNone {
+	switch config.PodIdentity {
+	case "", kedav1alpha1.PodIdentityProviderNone:
 		// get servicebus connection string
 		if config.AuthParams["connection"] != "" {
 			meta.connection = config.AuthParams["connection"]
@@ -114,13 +117,13 @@ func parseAzureServiceBusMetadata(config *ScalerConfig) (*azureServiceBusMetadat
 		if len(meta.connection) == 0 {
 			return nil, fmt.Errorf("no connection setting given")
 		}
-	} else if config.PodIdentity == kedav1alpha1.PodIdentityProviderAzure {
+	case kedav1alpha1.PodIdentityProviderAzure:
 		if val, ok := config.TriggerMetadata["namespace"]; ok {
 			meta.namespace = val
 		} else {
 			return nil, fmt.Errorf("namespace is required when using pod identity")
 		}
-	} else {
+	default:
 		return nil, fmt.Errorf("azure service bus doesn't support pod identity %s", config.PodIdentity)
 	}
 
@@ -184,11 +187,12 @@ func (s *azureServiceBusScaler) GetMetrics(ctx context.Context, metricName strin
 }
 
 type azureTokenProvider struct {
+	httpClient *http.Client
 }
 
 // GetToken implements TokenProvider interface for azureTokenProvider
-func (azureTokenProvider) GetToken(uri string) (*auth.Token, error) {
-	token, err := azure.GetAzureADPodIdentityToken("https://servicebus.azure.net")
+func (a azureTokenProvider) GetToken(uri string) (*auth.Token, error) {
+	token, err := azure.GetAzureADPodIdentityToken(a.httpClient, "https://servicebus.azure.net")
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +219,9 @@ func (s *azureServiceBusScaler) GetAzureServiceBusLength(ctx context.Context) (i
 		if err != nil {
 			return -1, err
 		}
-		namespace.TokenProvider = azureTokenProvider{}
+		namespace.TokenProvider = azureTokenProvider{
+			httpClient: s.httpClient,
+		}
 		namespace.Name = s.metadata.namespace
 	}
 

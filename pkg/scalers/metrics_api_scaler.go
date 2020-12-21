@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	neturl "net/url"
 
@@ -20,7 +19,7 @@ import (
 	"k8s.io/metrics/pkg/apis/external_metrics"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kedautil "github.com/kedacore/keda/pkg/util"
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 type metricsAPIScaler struct {
@@ -33,7 +32,7 @@ type metricsAPIScalerMetadata struct {
 	url           string
 	valueLocation string
 
-	//apiKeyAuth
+	// apiKeyAuth
 	enableAPIKeyAuth bool
 	method           string // way of providing auth key, either "header" (default) or "query"
 	// keyParamName  is either header key or query param used for passing apikey
@@ -41,26 +40,25 @@ type metricsAPIScalerMetadata struct {
 	keyParamName string
 	apiKey       string
 
-	//base auth
+	// base auth
 	enableBaseAuth bool
 	username       string
 	password       string // +optional
 
-	//client certification
+	// client certification
 	enableTLS bool
 	cert      string
 	key       string
 	ca        string
 }
 
-const defaultTimeOut = 3 * time.Second
-
 type authenticationType string
 
 const (
-	apiKeyAuth authenticationType = "apiKey"
-	basicAuth  authenticationType = "basic"
-	tlsAuth    authenticationType = "tls"
+	apiKeyAuth       authenticationType = "apiKey"
+	basicAuth        authenticationType = "basic"
+	tlsAuth          authenticationType = "tls"
+	methodValueQuery                    = "query"
 )
 
 var httpLog = logf.Log.WithName("metrics_api_scaler")
@@ -72,9 +70,7 @@ func NewMetricsAPIScaler(config *ScalerConfig) (Scaler, error) {
 		return nil, fmt.Errorf("error parsing metric API metadata: %s", err)
 	}
 
-	client := &http.Client{
-		Timeout: defaultTimeOut,
-	}
+	httpClient := kedautil.CreateHTTPClient(config.GlobalHTTPTimeout)
 
 	if meta.enableTLS {
 		config, err := kedautil.NewTLSConfig(meta.cert, meta.key, meta.ca)
@@ -82,12 +78,12 @@ func NewMetricsAPIScaler(config *ScalerConfig) (Scaler, error) {
 			return nil, err
 		}
 
-		client.Transport = &http.Transport{TLSClientConfig: config}
+		httpClient.Transport = &http.Transport{TLSClientConfig: config}
 	}
 
 	return &metricsAPIScaler{
 		metadata: meta,
-		client:   client,
+		client:   httpClient,
 	}, nil
 }
 
@@ -134,8 +130,8 @@ func parseMetricsAPIMetadata(config *ScalerConfig) (*metricsAPIScalerMetadata, e
 		meta.method = "header"
 		meta.enableAPIKeyAuth = true
 
-		if config.TriggerMetadata["method"] == "query" {
-			meta.method = "query"
+		if config.TriggerMetadata["method"] == methodValueQuery {
+			meta.method = methodValueQuery
 		}
 
 		if len(config.TriggerMetadata["keyParamName"]) > 0 {
@@ -268,8 +264,9 @@ func getMetricAPIServerRequest(meta *metricsAPIScalerMetadata) (*http.Request, e
 	var req *http.Request
 	var err error
 
-	if meta.enableAPIKeyAuth {
-		if meta.method == "query" {
+	switch {
+	case meta.enableAPIKeyAuth:
+		if meta.method == methodValueQuery {
 			url, _ := neturl.Parse(meta.url)
 			queryString := url.Query()
 			if len(meta.keyParamName) == 0 {
@@ -296,14 +293,14 @@ func getMetricAPIServerRequest(meta *metricsAPIScalerMetadata) (*http.Request, e
 				req.Header.Add(meta.keyParamName, meta.apiKey)
 			}
 		}
-	} else if meta.enableBaseAuth {
+	case meta.enableBaseAuth:
 		req, err = http.NewRequest("GET", meta.url, nil)
 		if err != nil {
 			return nil, err
 		}
 
 		req.SetBasicAuth(meta.username, meta.password)
-	} else {
+	default:
 		req, err = http.NewRequest("GET", meta.url, nil)
 		if err != nil {
 			return nil, err

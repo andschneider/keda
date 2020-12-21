@@ -17,7 +17,7 @@ import (
 	"k8s.io/metrics/pkg/apis/external_metrics"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	kedautil "github.com/kedacore/keda/pkg/util"
+	kedautil "github.com/kedacore/keda/v2/pkg/util"
 )
 
 const (
@@ -59,14 +59,14 @@ type huaweiAuthorizationMetadata struct {
 	// region
 	Region string
 
-	//Cloud name
+	// Cloud name
 	Domain string
 
-	//Cloud name
+	// Cloud name
 	Cloud string
 
-	AccessKey string //Access Key
-	SecretKey string //Secret key
+	AccessKey string // Access Key
+	SecretKey string // Secret key
 }
 
 var cloudeyeLog = logf.Log.WithName("huawei_cloudeye_scaler")

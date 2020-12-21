@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	kedav1alpha1 "github.com/kedacore/keda/v2/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -141,8 +141,12 @@ func TestResolveNonExistingConfigMapsOrSecretsEnv(t *testing.T) {
 }
 
 func TestResolveAuthRef(t *testing.T) {
-	corev1.AddToScheme(scheme.Scheme)
-	kedav1alpha1.AddToScheme(scheme.Scheme)
+	if err := corev1.AddToScheme(scheme.Scheme); err != nil {
+		t.Errorf("Expected Error because: %v", err)
+	}
+	if err := kedav1alpha1.AddToScheme(scheme.Scheme); err != nil {
+		t.Errorf("Expected Error because: %v", err)
+	}
 	tests := []struct {
 		name                string
 		existing            []runtime.Object
