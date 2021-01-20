@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
@@ -18,6 +20,9 @@ import (
 
 const (
 	defaultMqttMessagePresent  = true
+	defaultMqttPort            = 1883
+	defaultMqttQoS             = 1
+	defaultMqttUseAuth         = false
 	defaultMqttDesiredReplicas = 1
 )
 
@@ -26,11 +31,27 @@ type mqttScaler struct {
 	metadata *mqttMetadata
 }
 
-// TODO add auth parameters
 type mqttMetadata struct {
-	host            string
-	topic           string
-	present         bool
+	// MQTT broker to connect to, not including the port.
+	host string
+	// MQTT port to use, default is 1883.
+	port int
+	// MQTT topic to subscribe to.
+	topic string
+	// message QoS to receive, default is 1.
+	qos int
+	// messagePresent can be used to set the expected behavior based on whether
+	// a message is expected to be present or absent. Default is true.
+	messagePresent bool
+
+	// useAuth determines whether to connect using the username and password, default is false.
+	useAuth bool
+	// username for connecting to MQTT broker, optional.
+	username string
+	// password for connecting to MQTT broker, optional.
+	password string
+
+	// desiredReplicas is the number of replicas to scale to.
 	desiredReplicas int64
 }
 
@@ -54,7 +75,12 @@ func NewMqttScaler(config *ScalerConfig) (Scaler, error) {
 
 	// configure MQTT client
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker(meta.host)
+	broker := fmt.Sprintf("%s:%d", meta.host, meta.port)
+	opts.AddBroker(broker)
+	if meta.useAuth {
+		opts.SetUsername(meta.username)
+		opts.SetPassword(meta.password)
+	}
 	opts.SetClientID(generateMqttClientId())
 	opts.SetCleanSession(true)
 	opts.KeepAlive = 30
@@ -77,21 +103,68 @@ func parseMqttMetadata(config *ScalerConfig) (*mqttMetadata, error) {
 	} else {
 		return nil, fmt.Errorf("no MQTT host specified. %s", config.TriggerMetadata)
 	}
+	if val, ok := config.TriggerMetadata["port"]; ok && val != "" {
+		port, err := strconv.Atoi(val)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing port metadata. %s", config.TriggerMetadata)
+		}
+		meta.port = port
+	} else {
+		fmt.Printf("no MQTT port specified - using default: %d\n", defaultMqttPort)
+		meta.port = defaultMqttPort
+	}
 	if val, ok := config.TriggerMetadata["topic"]; ok && val != "" {
 		meta.topic = val
 	} else {
 		return nil, fmt.Errorf("no MQTT topic specified. %s", config.TriggerMetadata)
 	}
-	if val, ok := config.TriggerMetadata["present"]; ok {
-		present, err := strconv.ParseBool(val)
+	if val, ok := config.TriggerMetadata["qos"]; ok && val != "" {
+		qos, err := strconv.Atoi(val)
+		if err != nil {
+			return nil, fmt.Errorf("error parsing QoS metadata. %s", config.TriggerMetadata)
+		}
+		if qos < 0 || qos > 2 {
+			return nil, fmt.Errorf("invalid QoS metadata given. valid options are 0, 1, or 2\n")
+		}
+		meta.qos = qos
+	} else {
+		fmt.Printf("no QoS specified - setting default: %d", defaultMqttQoS)
+		meta.qos = defaultMqttQoS
+	}
+	if val, ok := config.TriggerMetadata["messagePresent"]; ok {
+		messagePresent, err := strconv.ParseBool(val)
 		if err != nil {
 			return nil, fmt.Errorf("invalid message present setting: %s", err)
 		}
-		meta.present = present
+		meta.messagePresent = messagePresent
 	} else {
-		fmt.Println("No message present setting defined - setting default")
-		meta.present = defaultMqttMessagePresent
+		fmt.Printf("No messagePresent setting defined - using default: %t\n", defaultMqttMessagePresent)
+		meta.messagePresent = defaultMqttMessagePresent
 	}
+
+	if val, ok := config.TriggerMetadata["useAuth"]; ok {
+		useAuth, err := strconv.ParseBool(val)
+		if err != nil {
+			return nil, fmt.Errorf("invalid useAuth setting: %s", err)
+		}
+		meta.useAuth = useAuth
+	} else {
+		fmt.Printf("No useAuth setting defined - using default: %t\n", defaultMqttUseAuth)
+		meta.useAuth = defaultMqttUseAuth
+	}
+	if meta.useAuth {
+		if val, ok := config.TriggerMetadata["username"]; ok && val != "" {
+			meta.username = strings.TrimSpace(val)
+		} else {
+			return nil, fmt.Errorf("no username specified. %s", config.TriggerMetadata)
+		}
+		if val, ok := config.TriggerMetadata["password"]; ok && val != "" {
+			meta.password = strings.TrimSpace(val)
+		} else {
+			return nil, fmt.Errorf("no password specified. %s", config.TriggerMetadata)
+		}
+	}
+
 	if val, ok := config.TriggerMetadata["desiredReplicas"]; ok && val != "" {
 		metadataDesiredReplicas, err := strconv.Atoi(val)
 		if err != nil {
@@ -99,30 +172,33 @@ func parseMqttMetadata(config *ScalerConfig) (*mqttMetadata, error) {
 		}
 		meta.desiredReplicas = int64(metadataDesiredReplicas)
 	} else {
-		return nil, fmt.Errorf("no DesiredReplicas specified. %s", config.TriggerMetadata)
+		return nil, fmt.Errorf("no desiredReplicas specified. %s", config.TriggerMetadata)
 	}
 
 	return &meta, nil
 }
 
 func (s *mqttScaler) checkPersistentMessage() (bool, error) {
-	// TODO add qos as a config param
-	qos := 0
 	if token := s.client.Connect(); token.Wait() && token.Error() != nil {
 		return false, fmt.Errorf("could not connect to broker: %v\n", token.Error())
 	}
 
+	// use a wait group to block the subscribe loop until a message is received
+	var wg sync.WaitGroup
+	wg.Add(1)
 	receivedRetain := false
-	if token := s.client.Subscribe(s.metadata.topic, byte(qos), func(client mqtt.Client, message mqtt.Message) {
+
+	if token := s.client.Subscribe(s.metadata.topic, byte(s.metadata.qos), func(client mqtt.Client, message mqtt.Message) {
 		mqttLog.Info("received message", "message", string(message.Payload()), "retained", message.Retained())
 		if message.Retained() {
 			receivedRetain = true
 		}
+		wg.Done()
 	}); token.Wait() && token.Error() != nil {
 		return false, fmt.Errorf("could not subscribe to topic: %v\n", token.Error())
 	}
+	wg.Wait()
 
-	// TODO fix race condition with this log and the received message log
 	mqttLog.Info("checked broker for persistent message",
 		"status", receivedRetain,
 		"broker", s.metadata.host,
@@ -151,9 +227,11 @@ func (s *mqttScaler) Close() error {
 func (s *mqttScaler) GetMetricSpecForScaling() []v2beta2.MetricSpec {
 	specReplicas := 1
 	targetMetricValue := resource.NewQuantity(int64(specReplicas), resource.DecimalSI)
+	mqttOpts := s.client.OptionsReader()
 	externalMetric := &v2beta2.ExternalMetricSource{
 		Metric: v2beta2.MetricIdentifier{
-			Name: kedautil.NormalizeString(fmt.Sprintf("%s-%s-%s-%t", "MQTT", s.metadata.host, s.metadata.topic, s.metadata.present)),
+			Name: kedautil.NormalizeString(fmt.Sprintf("%s-%s-%s-%s-%t",
+				"MQTT", s.metadata.host, s.metadata.topic, mqttOpts.ClientID(), s.metadata.messagePresent)),
 		},
 		Target: v2beta2.MetricTarget{
 			Type:         v2beta2.AverageValueMetricType,
@@ -172,7 +250,7 @@ func (s *mqttScaler) GetMetrics(ctx context.Context, metricName string, metricSe
 		mqttLog.Error(err, "error")
 		return []external_metrics.ExternalMetricValue{}, err
 	}
-	// TODO incorporate the metadata.present option here
+	// TODO incorporate the metadata.messagePresent option here
 	// if present is true, a retained message is expected
 	if hasRetained {
 		currentReplicas = s.metadata.desiredReplicas
